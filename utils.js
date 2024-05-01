@@ -25,7 +25,6 @@ function encryptMapiRequestBody(body) {
 }
 
 function encryptAndEncode(cardData, publicKeyPath) {
-  // Преобразуем объект в строку формата "ключ=значение" и объединяем через ;
   const dataString = Object.entries(cardData)
     .map(([key, value]) => `${key}=${value}`)
     .join(";");
