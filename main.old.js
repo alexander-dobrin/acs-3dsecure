@@ -3,6 +3,9 @@ const bodyParser = require("body-parser");
 const puppeteer = require("puppeteer");
 const { EventEmitter } = require("events");
 const querystring = require("querystring");
+const url = require("url");
+const { URL } = require("url");
+const { seedForm } = require("./utils");
 
 const app = express();
 
@@ -13,94 +16,79 @@ app.post("/pay", async (req, res) => {
   const page = await browser.newPage();
   await page.setRequestInterception(true);
 
-  const paymentRequestsInfo = {
-    "https://www.tinkoff.ru/api/common/v1/check_tds": {},
-    "https://3ds-ds1.mirconnect.ru/ma": {},
-    "https://3ds-ds1.mirconnect.ru/ma/DDC": {},
-    "https://www.tinkoff.ru/api/common/v1/3ds_method_notification": {},
-    "https://www.tinkoff.ru/api/common/v1/pay": {},
-    // "https://www.tinkoff.ru/api/common/v1/session_status": {},
-  };
+  const requests = {};
 
-  page.on("request", async (interceptedRequest) => {
-    const reqUrl = interceptedRequest.url();
-    const reqPath = reqUrl.split("?")[0];
+  page.on("request", async (request) => {
+    const parsedUrl = new URL(request.url());
+    const isApiCall =
+      request.resourceType() === "fetch" && request.method() == "POST";
 
-    if (paymentRequestsInfo[reqPath]) {
-      paymentRequestsInfo[reqPath].path = reqPath;
-      paymentRequestsInfo[reqPath].query = reqUrl.split("?")[1];
-      paymentRequestsInfo[reqPath].body = JSON.stringify(
-        interceptedRequest.postData()
-      );
-      console.log(interceptedRequest.response());
+    if (isApiCall) {
+      let body = {};
+
+      if (
+        request.headers()["content-type"] ===
+        "application/x-www-form-urlencoded"
+      ) {
+        body = querystring.parse(request.postData());
+      } else if (request.headers()["content-type"] === "application/json") {
+        body = JSON.parse(request.postData());
+      }
+
+      requests[parsedUrl.pathname] = {
+        query: parsedUrl.search,
+        body,
+      };
     }
 
-    interceptedRequest.continue();
+    request.continue();
+  });
+
+  page.on("response", async (response) => {
+    const request = response.request();
+    const parsedUrl = new URL(request.url());
+
+    const isApiCall =
+      request.resourceType() === "fetch" && request.method() == "POST";
+
+    if (isApiCall) {
+      let result = {};
+
+      try {
+        if (request.method().toUpperCase() != "OPTION") {
+          result = await response.json();
+        }
+      } catch (err) {
+        console.log(parsedUrl.pathname);
+      } finally {
+        requests[parsedUrl.pathname].response = result;
+      }
+    }
   });
 
   await page.goto("https://www.tinkoff.ru/payments/card-to-card/");
 
-  // Set screen size
-  // await page.setViewport({ width: 1080, height: 1024 });
-  const inputIds = await page.$$eval("input", (inputs) =>
-    inputs.map((input) => input.id)
-  );
-  // Type into search box
-  let step = 0;
-  for (const id of inputIds) {
-    if (step == 0) {
-      step++;
-      continue;
+  await seedForm(page, req);
+
+  while (true) {
+    // if (requests["/api/common/v1/pay"]) {
+    //   break;
+    // }
+    if (
+      requests["/api/common/v1/confirm"] &&
+      requests["/api/common/v1/confirm"].response
+    ) {
+      break;
     }
-    if (step == 1) {
-      await page.type(`#${id}`, req.body.from);
-    }
-    if (step == 2) {
-      await page.type(`#${id}`, req.body.activeTo);
-    }
-    if (step == 3) {
-      await page.click(`#${id}`);
-      const digits = req.body.cvc;
-      for (const digit of digits) {
-        await page.evaluate((digit) => {
-          const spans = document.querySelectorAll("span");
-          for (const span of spans) {
-            if (span.innerHTML == digit) {
-              span.click();
-            }
-          }
-        }, digit);
-      }
-    }
-    if (step == 4) {
-      await page.type(`#${id}`, req.body.to);
-    }
-    if (step == 5) {
-      await page.type(`#${id}`, req.body.ammount);
-    }
-    step++;
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  // Wait and click on first result
-  // Find and click on the button with data attribute 'data-qa-file="Button"'
-  const buttonSelector = `[data-qa-file="SubmitButton"]`;
-  await new Promise((resolve, reject) => {
-    setTimeout(() => {
-      resolve();
-    }, 1000);
-  });
-  await page.waitForSelector(buttonSelector, { timeout: 1500 });
-  await page.$eval(buttonSelector, (button) => button.click());
-  await page.waitForSelector(buttonSelector, { timeout: 1500 });
-  await page.click(buttonSelector);
 
-  await new Promise((resolve, reject) => {
-    setTimeout(() => {
-      resolve();
-    }, 2000);
+  res.json({
+    payStatus: requests["/api/common/v1/pay"].response.resultCode,
+    confirmStatus: requests["/api/common/v1/confirm"].response.resultCode,
+    requests,
   });
-  console.log(paymentRequestsInfo);
-
-  res.json({ title: "fullTitl" });
 });
 
 app.listen(3004, () => {

@@ -44,4 +44,50 @@ function encryptAndEncode(cardData, publicKeyPath) {
   return base64Encoded;
 }
 
-module.exports = { encryptMapiRequestBody, encryptAndEncode };
+async function requestsInterceptor(page) {}
+
+async function seedForm(page, req) {
+  const inputIds = await page.$$eval("input", (inputs) =>
+    inputs.map((input) => input.id)
+  );
+  let step = 0;
+  for (const id of inputIds) {
+    if (step == 0) {
+      step++;
+      continue;
+    }
+    if (step == 1) {
+      await page.type(`#${id}`, req.body.from);
+    }
+    if (step == 2) {
+      await page.type(`#${id}`, req.body.activeTo);
+    }
+    if (step == 3) {
+      await page.click(`#${id}`);
+      const digits = req.body.cvc;
+      for (const digit of digits) {
+        await page.evaluate((digit) => {
+          const spans = document.querySelectorAll("span");
+          for (const span of spans) {
+            if (span.innerHTML == digit) {
+              span.click();
+            }
+          }
+        }, digit);
+      }
+    }
+    if (step == 4) {
+      await page.type(`#${id}`, req.body.to);
+    }
+    if (step == 5) {
+      await page.type(`#${id}`, req.body.ammount);
+    }
+    step++;
+  }
+}
+
+module.exports = {
+  encryptMapiRequestBody,
+  encryptAndEncode,
+  seedForm,
+};
