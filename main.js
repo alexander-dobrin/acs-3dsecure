@@ -1,209 +1,136 @@
-const dotenv = require("dotenv");
-const { encryptMapiRequestBody } = require("./utils");
-const parser = require("xml2js");
+const express = require("express");
+const bodyParser = require("body-parser");
+const puppeteer = require("puppeteer");
+const querystring = require("querystring");
+const { URL } = require("url");
+const { seedForm } = require("./utils");
 
-dotenv.config();
+const app = express();
 
-// const pay = async (req, res) => {
-//   const InitRequestBody = {
-//     TerminalKey: "TinkoffBankTest",
-//     Amount: 1000,
-//     OrderId: 20986163,
-//     Description: "Подарочная карта на 1000 рублей",
-//     DATA: {
-//       Phone: "+71234567890",
-//       Email: "a@test.com",
-//     },
-//     Receipt: {
-//       Email: "a@test.ru",
-//       Phone: "+79031234567",
-//       Taxation: "osn",
-//       Items: [
-//         {
-//           Name: "Наименование товара 1",
-//           Price: 1000,
-//           Quantity: 1,
-//           Amount: 1000,
-//           Tax: "vat10",
-//           Ean13: "303130323930303030630333435",
-//         },
-//       ],
-//     },
-//   };
+app.use(bodyParser.json("application/json"));
 
-//   const InitToken = encryptMapiRequestBody(InitRequestBody);
-//   InitRequestBody.Token = InitToken;
-//   const InitResponse = await fetch("https://securepay.tinkoff.ru/v2/Init", {
-//     method: "POST",
-//     headers: {
-//       "Content-Type": "application/json",
-//     },
-//     body: JSON.stringify(InitRequestBody),
-//   });
-//   const InitResponseJson = await InitResponse.json();
+app.post("/pay", async (req, res) => {
+  const browser = await puppeteer.launch({ headless: false });
+  const page = await browser.newPage();
+  await page.setRequestInterception(true);
 
-//   const GetStateRequestBody = {
-//     TerminalKey: "TinkoffBankTest",
-//     PaymentId: InitResponseJson.PaymentId,
-//   };
-//   const GetStateToken = encryptMapiRequestBody(GetStateRequestBody);
-//   GetStateRequestBody.Token = GetStateToken.toLocaleLowerCase();
-//   const GetStateResponse = await fetch(
-//     "https://securepay.tinkoff.ru/v2/GetState",
-//     {
-//       method: "POST",
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//       body: JSON.stringify(GetStateRequestBody),
-//     }
-//   );
-//   const GetStateResponseJson = await GetStateResponse.json();
+  const requests = {};
 
-//   // 3ds auth required
-//   if (GetStateResponseJson.Status !== "AUTHORIZED") {
-//     return;
-//   }
+  page.on("request", async (request) => {
+    const parsedUrl = new URL(request.url());
+    const isApiCall = true;
 
-//   const cardData = {
-//     PAN: "4300000000000777",
-//     ExpDate: "0519",
-//     CardHolder: "IVAN PETROV",
-//     CVV: "111",
-//   };
+    if (isApiCall) {
+      let body = {};
 
-//   const publicKeyPath = "path/to/publicKey.pem";
-//   const encodedCardData = encryptAndEncode(cardData, publicKeyPath);
+      if (
+        request.headers()["content-type"] ===
+        "application/x-www-form-urlencoded"
+      ) {
+        body = querystring.parse(request.postData());
+      } else if (request.headers()["content-type"] === "application/json") {
+        try {
+          body = JSON.parse(request.postData());
+        } catch (error) {
+          body = {};
+        }
+      }
 
-//   const FinishAuthorizeRequestBody = {
-//     TerminalKey: "TinkoffBankTest",
-//     PaymentId: 700001702044,
-//     Token: "f5a3be479324a6d3a4d9efa0d02880b77d04a91758deddcbd9e752a6df97cab5",
-//     IP: "2011:0db8:85a3:0101:0101:8a2e:0370:7334",
-//     SendEmail: true,
-//     Source: "cards",
-//     DATA: {
-//       threeDSCompInd: "Y",
-//       language: "RU",
-//       timezone: "-300",
-//       screen_height: "1024",
-//       screen_width: "967",
-//       cresCallbackUrl: "www.callbackurl.ru",
-//       colorDepth: "48",
-//       javaEnabled: "false",
-//     },
-//     InfoEmail: "qwerty@test.com",
-//     EncryptedPaymentData: "string",
-//     CardData: encodedCardData,
-//     Amount: 10000,
-//     deviceChannel: "02",
-//     Route: "ACQ",
-//   };
-//   const FinishAuthorizeToken = encryptMapiRequestBody(
-//     FinishAuthorizeRequestBody
-//   );
-//   FinishAuthorizeRequestBody.Token = FinishAuthorizeToken.toLocaleLowerCase();
-//   const FinishAuthorizeResponse = await fetch(
-//     "https://securepay.tinkoff.ru/v2/FinishAuthorize",
-//     {
-//       method: "POST",
-//       headers: {
-//         "Content-Type": "application/json",
-//       },
-//       body: JSON.stringify(GetStateRequestBody),
-//     }
-//   );
-//   const FinishAuthorizeResponseJson = await FinishAuthorizeResponse.json();
+      requests[parsedUrl.pathname] = {
+        query: parsedUrl.search,
+        body,
+      };
+    }
 
-//   // 3ds auth required
-//   if (FinishAuthorizeResponseJson.Status !== "3DS_CHECKING") {
-//     return;
-//   }
+    request.continue();
+  });
 
-//   const { PaReq, ASCUrl, MD } = FinishAuthorizeResponseJson;
+  page.on("response", async (response) => {
+    const request = response.request();
+    const parsedUrl = new URL(request.url());
+    const isApiCall = true;
 
-//   const formData = {
-//     MD,
-//     PaReq,
-//     CardData: encodedCardData,
-//   };
-//   const params = new URLSearchParams(formData);
-//   const response = await fetch(ASCUrl, {
-//     method: "POST",
-//     headers: {
-//       "Content-Type": "application/x-www-form-urlencoded",
-//     },
-//     body: params,
-//   });
+    if (isApiCall) {
+      let result = {};
 
-//   /*
-//   EXAMPLE VALUE
-// <ThreeDSecure>
-//   <Message id="999">
-//     <VEReq>
-//       <version>1.0.2</version>
-//       <pan>4444333322221111</pan>
-//       <Merchant>
-//         <acqBIN>411111</acqBIN>
-//         <merID>99000001</merID>
-//         <password>99000001</password>
-//       </Merchant>
-//       <Browser>
-//         <deviceCategory>0</deviceCategory>
-//         <accept>/*</accept>
-//         <userAgent>curl/7.27.0</userAgent>
-//       </Browser>
-//     </VEReq>
-//   </Message>
-// </ThreeDSecure>
-//   */
-//   const { PaRes } = await response.json();
+      try {
+        if (request.method().toUpperCase() != "OPTION") {
+          result = await response.json();
+        }
+      } catch (err) {
+        console.log(parsedUrl.pathname);
+      } finally {
+        requests[parsedUrl.pathname].response = result;
+      }
+    }
+  });
 
-//   const decodedPaRes = Buffer.from(mockPaRes, "base64").toString("utf-8");
+  await page.goto("https://www.tinkoff.ru/payments/card-to-card/");
 
-//   parser.parseString(decodedPaRes, (err, result) => {
-//     if (err) {
-//       console.error("parse xml", err);
-//     } else {
-//       console.log("result", result);
-//       const status = result.PaRes.Browser.userAgent[0];
-//       console.log("user agent:", status);
-//     }
-//   });
+  await seedForm(page, req);
 
-//   const submitFormData = {
-//     MD,
-//     PaRes,
-//     PaymentId,
-//     TerminalKey,
-//     Token,
-//   };
-//   const submitParams = new URLSearchParams(submitFormData);
-//   const submit3DsResponse = await fetch(ASCUrl, {
-//     method: "POST",
-//     headers: {
-//       "Content-Type": "application/x-www-form-urlencoded",
-//     },
-//     body: submitParams,
-//   });
-//   const { Status } = await submit3DsResponse.json();
+  while (true) {
+    if (
+      requests["/api/common/v1/confirm"] &&
+      requests["/api/common/v1/confirm"].response
+    ) {
+      break;
+    }
 
-//   if (Status != "CONFIRMED") {
-//     return;
-//   }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
 
-//   // success, redirect
-// };
+  let timeout = false;
+  new Promise((resolve, reject) =>
+    setTimeout(() => ((timeout = true), resolve(true)), 15_000)
+  );
+  let cReqBase64;
+  let cResBase64;
 
-// pay();
+  while (true) {
+    if (requests["/3dsecure/end/"]?.body?.cres || timeout) {
+      cReqBase64 = requests["/acs/v2.1.0/mir/challenge/start"].body.creq;
+      cResBase64 = requests["/3dsecure/end/"].body.cres;
+      break;
+    }
 
-// const pareq =
-//   "eyJtZXNzYWdlVmVyc2lvbiI6IjIuMS4wIiwidGhyZWVEU1NlcnZlclRyYW5zSUQiOiI3NDQxZTg5ZS1iMDljLTQyMWQtYTI2OC0xNTg1NjM0N2I1MmQiLCJhY3NUcmFuc0lEIjoiMjViODk2OTAtZWZjNy00MDM2LWJmZDMtOWE0YzMzYzFhODQ4IiwiY2hhbGxlbmdlV2luZG93U2l6ZSI6IjA1IiwibWVzc2FnZVR5cGUiOiJDUmVxIn0";
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
 
-const base64String =
-  "eyJ0aHJlZURTU2VydmVyVHJhbnNJRCI6IjJmODY4MGVkLTJlMDgtNDM0ZC1iYTM0LTA3MGQ4MmIxNzY0MyIsImFjc1RyYW5zSUQiOiJhMTQ1ZDkyMy0yOGE3LTRmODctYjgzZi1lY2FkOWFlZmJlNTYiLCJtZXNzYWdlVHlwZSI6IkNSZXMiLCJtZXNzYWkNSZXMiLCJtZXNzYWdlVmVyc2lvbiI6IjIuMS4wIiwidHJhbnNTdGF0dXMiOiJZIn0";
+  let buffer = Buffer.from(cReqBase64, "base64");
+  let decodedString = buffer.toString("utf-8");
+  const paReqDecoded = decodedString; // cReq
 
-const buffer = Buffer.from(base64String, "base64");
-const decodedString = buffer.toString("utf-8");
+  buffer = Buffer.from(cResBase64, "base64");
+  decodedString = buffer.toString("utf-8");
+  const paResDecoded = decodedString; // cRes
 
-console.log(decodedString);
+  let paReq;
+  let paRes;
+
+  try {
+    paReq = JSON.parse(paReqDecoded);
+    paRes = JSON.parse(paResDecoded);
+
+    if (paReq.acsTransID != paRes.acsTransID) {
+      res.status(400).json({ error: "ответ подделан" });
+    }
+  } catch (error) {
+    paReq = {};
+    paRes = {};
+  }
+
+  res.json({
+    paReqDecoded,
+    paResDecoded,
+    paReq,
+    paRes,
+    payStatus: requests["/api/common/v1/pay"].response.resultCode,
+    confirmStatus: requests["/api/common/v1/confirm"].response.resultCode,
+    requests,
+  });
+});
+
+app.listen(3004, () => {
+  console.log("start");
+});

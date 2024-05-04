@@ -44,8 +44,6 @@ function encryptAndEncode(cardData, publicKeyPath) {
   return base64Encoded;
 }
 
-async function requestsInterceptor(page) {}
-
 async function seedForm(page, req) {
   const inputIds = await page.$$eval("input", (inputs) =>
     inputs.map((input) => input.id)
